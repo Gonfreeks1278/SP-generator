@@ -1,7 +1,7 @@
 import streamlit as st
 from openai import OpenAI
 import base64
-import json
+import random
 
 # ===== Secrets =====
 client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
@@ -9,24 +9,67 @@ client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 SALON_NAME = st.secrets["SALON_NAME"]
 SALON_AREA = st.secrets["SALON_AREA"]
 SALON_CONCEPT = st.secrets["SALON_CONCEPT"]
-SALON_TARGET = st.secrets["SALON_TARGET"]
-SALON_SERVICE = st.secrets["SALON_SERVICE"]
 
-# ===== Page =====
+# ===== 初期state =====
+if "last_content" not in st.session_state:
+    st.session_state.last_content = None
+if "last_variation" not in st.session_state:
+    st.session_state.last_variation = None
+
+# ===== ページ =====
 st.set_page_config(page_title="SNS投稿ジェネレーター", layout="centered")
-
 st.title("🌿 SNS投稿ジェネレーター")
-st.caption("画像を入れるだけで、上品・自然派の投稿文を作成します")
+st.caption("被ったら、ワンクリックで作り直せます")
 
 # ===== UI =====
 uploaded_file = st.file_uploader(
-    "施術写真・動画をアップロードしてください",
-    type=["png", "jpg", "jpeg", "mp4"]
+    "施術写真をアップロード",
+    type=["png", "jpg", "jpeg"]
 )
 
 post_type = st.selectbox(
     "投稿タイプ",
     ["施術紹介", "デザイン紹介", "空き状況・予約案内", "日常・想い"]
+)
+
+st.markdown("### 👤 顧客属性")
+age_group = st.multiselect(
+    "年代",
+    ["10代", "20代", "30代", "40代", "50代", "60代"]
+)
+
+gender = st.radio(
+    "性別",
+    ["女性", "男性", "指定しない"],
+    horizontal=True
+)
+
+st.markdown("### 💄 メニュー")
+menus = st.multiselect(
+    "施術メニュー",
+    [
+        "コスメパーマ",
+        "パリジェンヌ",
+        "アイブロウ",
+        "HBL",
+        "フラットラッシュ",
+        "ミンク",
+        "フラットマットラッシュ"
+    ]
+)
+
+st.markdown("### ✨ 施術ポイント")
+points = st.multiselect(
+    "今回のポイント",
+    [
+        "カール感",
+        "立ち上がり",
+        "横から見たライン",
+        "目の縦幅",
+        "メイクとの相性",
+        "自まつげの活かし方",
+        "骨格バランス"
+    ]
 )
 
 platforms = st.multiselect(
@@ -36,95 +79,95 @@ platforms = st.multiselect(
 )
 
 generate = st.button("✨ 投稿文を生成")
+regen = st.button("🌀 前回と同じニュアンス → 作り直す")
 
-# ===== Prompt =====
-SYSTEM_PROMPT = """
-あなたは経験豊富なアイリストであり、
-上品で自然派の世界観を大切にする美容サロンのSNS担当者です。
+# ===== プロンプト補助 =====
+VARIATIONS = [
+    "仕上がりの雰囲気から書き出す",
+    "施術中のこだわり視点で書く",
+    "お客様の日常に寄り添う書き方",
+    "目元の印象変化にフォーカス",
+    "ナチュラルさを言葉で表現する"
+]
 
-誇張表現・効果断定・医療表現は禁止。
-やわらかく落ち着いた日本語で書いてください。
-"""
+def generate_post(force_new=False):
+    image_bytes = uploaded_file.read()
+    image_base64 = base64.b64encode(image_bytes).decode("utf-8")
 
-USER_PROMPT = f"""
-以下の画像をもとにSNS投稿文を作ってください。
+    if force_new and st.session_state.last_variation:
+        choices = [v for v in VARIATIONS if v != st.session_state.last_variation]
+        variation = random.choice(choices)
+    else:
+        variation = random.choice(VARIATIONS)
 
-サロン情報：
+    st.session_state.last_variation = variation
+
+    prompt = f"""
+以下の画像をもとにSNS投稿文を作成してください。
+
+【サロン】
 ・地域：{SALON_AREA}
 ・コンセプト：{SALON_CONCEPT}
-・サービス：{SALON_SERVICE}
-・ターゲット：{SALON_TARGET}
+・店名：{SALON_NAME}
 
-投稿タイプ：{post_type}
+【条件】
+・投稿タイプ：{post_type}
+・年代：{", ".join(age_group) if age_group else "幅広い年代"}
+・性別：{gender}
+・メニュー：{", ".join(menus)}
+・施術ポイント：{", ".join(points)}
+・文章の切り口：{variation}
 
 【出力形式】
-必ずJSON形式で出力してください。
-
-{{
-  "instagram": "Instagram用の本文（改行・ハッシュタグ含む）",
-  "x": "X用の本文（140文字以内）"
-}}
-
-Instagram：
+▼Instagram用
 ・3〜6行
-・最後に自然な予約導線
-・ハッシュタグ10〜15個
-・#{SALON_NAME} を必ず含める
+・上品・自然
+・最後にやさしい導線
+・ハッシュタグ10〜15個（#{SALON_NAME} 必須）
 
-X：
-・余白のある文章
-・ハッシュタグ2〜3個
-・#{SALON_NAME} を必ず含める
+▼X用
+・140文字以内
+・ハッシュタグ2〜3個（#{SALON_NAME} 必須）
 """
 
-# ===== Execute =====
-if generate and uploaded_file:
-    with st.spinner("生成中..."):
-        image_bytes = uploaded_file.read()
-        image_base64 = base64.b64encode(image_bytes).decode()
-
-        res = client.chat.completions.create(
-            model="gpt-4.1-mini",
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": USER_PROMPT},
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:image/jpeg;base64,{image_base64}"
-                            }
+    response = client.chat.completions.create(
+        model="gpt-4.1-mini",
+        messages=[
+            {"role": "system", "content": "同じ言い回しを避けてください。"},
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt},
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:image/jpeg;base64,{image_base64}"
                         }
-                    ]
-                }
-            ],
-            max_tokens=700
-        )
+                    }
+                ]
+            }
+        ],
+        max_tokens=700
+    )
 
-    raw_text = res.choices[0].message.content
+    st.session_state.last_content = response.choices[0].message.content
 
-    try:
-        json_start = raw_text.index("{")
-        json_end = raw_text.rindex("}") + 1
-        json_text = raw_text[json_start:json_end]
-        data = json.loads(json_text)
-    except Exception:
-        st.error("生成結果の解析に失敗しました")
-        st.text_area("デバッグ用：AIの生出力", raw_text, height=300)
-        st.stop()
+# ===== 実行 =====
+if uploaded_file and (generate or regen):
+    with st.spinner("生成中..."):
+        generate_post(force_new=regen)
 
-    st.success("生成完了！")
+if st.session_state.last_content:
+    content = st.session_state.last_content
 
     if "Instagram" in platforms:
-        st.subheader("📸 Instagram用")
-        st.code(data["instagram"], language="text")
-        st.caption("右上の📋でワンクリックコピー")
+        st.markdown("## 📸 Instagram用")
+        insta = content.split("▼X用")[0].replace("▼Instagram用", "").strip()
+        st.code(insta)
+        st.button("📋 Instagram用をコピー", on_click=lambda: st.session_state.update({"_copy": insta}))
 
-    if "X" in platforms:
-        st.subheader("📝 X用")
-        st.code(data["x"], language="text")
-
-elif generate:
-    st.warning("画像をアップロードしてください")
+    if "X" in platforms and "▼X用" in content:
+        st.markdown("## 🐦 X用")
+        xtext = content.split("▼X用")[1].strip()
+        st.code(xtext)
+        st.button("📋 X用をコピー", on_click=lambda: st.session_state.update({"_copy": xtext}))
