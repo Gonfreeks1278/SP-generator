@@ -1,8 +1,9 @@
 import streamlit as st
 from openai import OpenAI
 import base64
+import json
 
-# ===== Secrets 読み込み =====
+# ===== Secrets =====
 client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 
 SALON_NAME = st.secrets["SALON_NAME"]
@@ -11,13 +12,13 @@ SALON_CONCEPT = st.secrets["SALON_CONCEPT"]
 SALON_TARGET = st.secrets["SALON_TARGET"]
 SALON_SERVICE = st.secrets["SALON_SERVICE"]
 
-# ===== ページ設定 =====
+# ===== Page =====
 st.set_page_config(page_title="SNS投稿ジェネレーター", layout="centered")
 
 st.title("🌿 SNS投稿ジェネレーター")
 st.caption("画像を入れるだけで、上品・自然派の投稿文を作成します")
 
-# ===== 入力UI =====
+# ===== UI =====
 uploaded_file = st.file_uploader(
     "施術写真・動画をアップロードしてください",
     type=["png", "jpg", "jpeg", "mp4"]
@@ -31,85 +32,65 @@ post_type = st.selectbox(
 platforms = st.multiselect(
     "投稿先",
     ["Instagram", "X"],
-    default=["Instagram", "X"]
+    default=["Instagram"]
 )
 
 generate = st.button("✨ 投稿文を生成")
 
-# ===== プロンプト =====
+# ===== Prompt =====
 SYSTEM_PROMPT = """
 あなたは経験豊富なアイリストであり、
 上品で自然派の世界観を大切にする美容サロンのSNS担当者です。
 
-以下を必ず守ってください。
-・誇張表現や効果の断定はしない
-・医療的・薬機法に抵触する表現は避ける
-・煽り・強い売り込みはしない
-・落ち着いた、やわらかい日本語を使う
-・お客様目線で安心感を与える
-・大人の女性向けのトーンにする
-
-文章は「丁寧・上品・自然体」を最優先にしてください。
+誇張表現・効果断定・医療表現は禁止。
+やわらかく落ち着いた日本語で書いてください。
 """
 
-USER_PROMPT_TEMPLATE = f"""
-以下の画像（または動画）をもとに、
-あなたは{SALON_AREA}で活動する
-「{SALON_CONCEPT}」を大切にする
-{SALON_SERVICE}の専門家です。
+USER_PROMPT = f"""
+以下の画像をもとにSNS投稿文を作ってください。
 
-ターゲットは{SALON_TARGET}です。
+サロン情報：
+・地域：{SALON_AREA}
+・コンセプト：{SALON_CONCEPT}
+・サービス：{SALON_SERVICE}
+・ターゲット：{SALON_TARGET}
 
-この画像を使って、新規のお客様にも伝わる
-上品で自然なSNS投稿文を作ってください。
-
-【投稿条件】
-・投稿先：{{platforms}}
-・投稿タイプ：{{post_type}}
-・トーン：上品・自然派
+投稿タイプ：{post_type}
 
 【出力形式】
-▼Instagram用
-・3〜6行程度
-・やわらかく世界観を表現
-・最後に自然な導線（予約・プロフィール誘導）
-・ハッシュタグ10〜15個
-  （業種＋地域＋ナチュラル系＋
-   #{{SALON_NAME}} を必ず含める）
+必ずJSON形式で出力してください。
 
-▼X用
-・140文字以内
+{{
+  "instagram": "Instagram用の本文（改行・ハッシュタグ含む）",
+  "x": "X用の本文（140文字以内）"
+}}
+
+Instagram：
+・3〜6行
+・最後に自然な予約導線
+・ハッシュタグ10〜15個
+・#{SALON_NAME} を必ず含める
+
+X：
 ・余白のある文章
 ・ハッシュタグ2〜3個
-  （#{{SALON_NAME}} を必ず含める）
-
-【注意点】
-・Before/Afterの効果を断定しない
-・「改善した」「治る」などの表現は使わない
-・見た目の印象や雰囲気にフォーカスする
+・#{SALON_NAME} を必ず含める
 """
 
-# ===== 実行 =====
+# ===== Execute =====
 if generate and uploaded_file:
-    with st.spinner("投稿文を生成中..."):
+    with st.spinner("生成中..."):
         image_bytes = uploaded_file.read()
-        image_base64 = base64.b64encode(image_bytes).decode("utf-8")
+        image_base64 = base64.b64encode(image_bytes).decode()
 
-        response = client.chat.completions.create(
+        res = client.chat.completions.create(
             model="gpt-4.1-mini",
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {
                     "role": "user",
                     "content": [
-                        {
-                            "type": "text",
-                            "text": USER_PROMPT_TEMPLATE.format(
-                                platforms=", ".join(platforms),
-                                post_type=post_type,
-                                SALON_NAME=SALON_NAME
-                            )
-                        },
+                        {"type": "text", "text": USER_PROMPT},
                         {
                             "type": "image_url",
                             "image_url": {
@@ -122,13 +103,28 @@ if generate and uploaded_file:
             max_tokens=700
         )
 
-        st.success("生成完了！")
+    raw_text = res.choices[0].message.content
 
-        st.text_area(
-            "📄 生成された投稿文（そのままコピペOK）",
-            response.choices[0].message.content,
-            height=420
-        )
+    try:
+        json_start = raw_text.index("{")
+        json_end = raw_text.rindex("}") + 1
+        json_text = raw_text[json_start:json_end]
+        data = json.loads(json_text)
+    except Exception:
+        st.error("生成結果の解析に失敗しました")
+        st.text_area("デバッグ用：AIの生出力", raw_text, height=300)
+        st.stop()
+
+    st.success("生成完了！")
+
+    if "Instagram" in platforms:
+        st.subheader("📸 Instagram用")
+        st.code(data["instagram"], language="text")
+        st.caption("右上の📋でワンクリックコピー")
+
+    if "X" in platforms:
+        st.subheader("📝 X用")
+        st.code(data["x"], language="text")
 
 elif generate:
-    st.warning("画像または動画をアップロードしてください。")
+    st.warning("画像をアップロードしてください")
