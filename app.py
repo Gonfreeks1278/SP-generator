@@ -164,10 +164,8 @@ if st.session_state.last_content:
         st.markdown("## 📸 Instagram用")
         insta = content.split("▼X用")[0].replace("▼Instagram用", "").strip()
         st.code(insta)
-        st.button("📋 Instagram用をコピー", on_click=lambda: st.session_state.update({"_copy": insta}))
 
     if "X" in platforms and "▼X用" in content:
         st.markdown("## 🐦 X用")
         xtext = content.split("▼X用")[1].strip()
         st.code(xtext)
-        st.button("📋 X用をコピー", on_click=lambda: st.session_state.update({"_copy": xtext}))
